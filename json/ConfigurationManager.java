@@ -15,9 +15,36 @@ public class ConfigurationManager {
     private String reportFileName;
 
     public ConfigurationManager(String configFile) throws IOException {
-        JsonObject config = JsonParser
-                .parseReader(new FileReader(configFile))
-                .getAsJsonObject();
+        // Résolution du chemin : absolu = on prend tel quel, sinon on cherche dans le dossier du script Java exécuté
+        File configF = new File(configFile);
+        if (!configF.isAbsolute()) {
+            try {
+                File scriptDir = new File(ConfigurationManager.class.getProtectionDomain().getCodeSource().getLocation().toURI()).getParentFile();
+                File candidate = new File(scriptDir, configFile);
+                if (candidate.exists()) {
+                    configF = candidate;
+                }
+            } catch (Exception e) {
+                // Fallback : on ne change rien
+            }
+        }
+        if (!configF.exists()) {
+            throw new FileNotFoundException("Configuration file not found: " + configF.getAbsolutePath());
+        }
+        try (FileReader reader = new FileReader(configF)) {
+            JsonObject config = JsonParser.parseReader(reader).getAsJsonObject();
+            this.primaryKey = config.get("primary_key").getAsString();
+            this.fallbackKey = config.has("fallback_key")
+                    ? config.get("fallback_key").getAsString()
+                    : null;
+            this.subSectionKeys = config.getAsJsonObject("subSectionKeys");
+            this.ignoredFields = config.has("ignored_fields") && config.get("ignored_fields").isJsonObject()
+                    ? config.getAsJsonObject("ignored_fields")
+                    : new JsonObject();
+            this.reportFileName = config.get("reportFileName").getAsString();
+        } catch (Exception e) {
+            throw new IOException("Error reading configuration file: " + configF.getAbsolutePath() + "\n" + e.getMessage(), e);
+        }
         this.primaryKey = config.get("primary_key").getAsString();
         this.fallbackKey = config.has("fallback_key")
                 ? config.get("fallback_key").getAsString()

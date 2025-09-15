@@ -29,7 +29,25 @@ public class TxtReportGenerator {
         String baseName = ConfigReader.getReportFileName();
         String txtPath = Paths.get(dossierRapport, baseName + "_" + horodatage + ".txt").toString();
         txtFilePath = txtPath;
-        Files.write(Paths.get(txtPath), rapportTexte.toString().getBytes());
+
+        // Préfixe d'en-tête professionnel
+        StringBuilder rapportFinal = new StringBuilder();
+        rapportFinal.append("==============================\n");
+        rapportFinal.append("TXT FILES COMPARISON REPORT\n");
+        rapportFinal.append("==============================\n\n");
+        // On tente d'extraire les chemins des fichiers depuis le rapport, sinon on laisse vide
+        String refFile = "";
+        String newFile = "";
+        for (String line : rapportTexte.toString().split("\n")) {
+            if (line.startsWith("Reference file : ")) refFile = line.substring("Reference file : ".length());
+            if (line.startsWith("New file       : ")) newFile = line.substring("New file       : ".length());
+            if (!refFile.isEmpty() && !newFile.isEmpty()) break;
+        }
+        rapportFinal.append("Reference file : " + refFile + "\n");
+        rapportFinal.append("New file       : " + newFile + "\n\n");
+        rapportFinal.append("Below are the detected differences (modifications, additions, deletions):\n\n");
+        rapportFinal.append(rapportTexte);
+        Files.write(Paths.get(txtPath), rapportFinal.toString().getBytes());
 
         afficher("* Text (.txt) report saved to : " + txtPath);
 

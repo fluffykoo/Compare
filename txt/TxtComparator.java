@@ -81,7 +81,9 @@ public class TxtComparator {
         toutesLesCles.addAll(mapRef.keySet());
         toutesLesCles.addAll(mapNouv.keySet());
 
-        for (String cle : toutesLesCles) {
+
+
+    for (String cle : toutesLesCles) {
             String ancienne = mapRef.get(cle);
             String nouvelle = mapNouv.get(cle);
 
@@ -95,6 +97,8 @@ public class TxtComparator {
                 afficher("  Old : " + ancienne);
             } else if (!ancienne.equals(nouvelle)) {
                 afficher("[MODIFIED] Key = " + cle);
+                // Ajout d'une ligne MODIFICATION globale pour la clé
+                xlsxData.add(new String[]{"MODIFICATION", cle, "", ancienne, nouvelle});
                 List<String[]> differences = comparerColonnes(ancienne, nouvelle, nomsColonnes, cle, colonnesIgnorees);
                 for (String[] ligne : differences) {
                     afficher("  * " + ligne[2] + " :");

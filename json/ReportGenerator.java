@@ -1,10 +1,16 @@
 package com.mmd.json;
 
+
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import java.io.*;
 import java.nio.file.*;
 import java.util.*;
+
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
+import com.mmd.json.Difference;
+import com.mmd.json.ChangeType;
 
 
 public class ReportGenerator {
@@ -41,8 +47,61 @@ public class ReportGenerator {
         // Regroupement par ID d'entité
         Map<String, List<Difference>> byEntityId = groupByEntityId(differences);
 
-        report.append("=== JSON Differences Report ===\n\n");
+        // Calcul des objets identiques, ajoutés, supprimés
+        Set<String> allRefIds = new HashSet<>();
+        Set<String> allNewIds = new HashSet<>();
+        //lire les fichiers JSON pour compter les objets
+        int totalRef = 0;
+        int totalNew = 0;
+        try {
+            if (this.refFileName != null && this.newFileName != null) {
+                JsonArray refArray = com.google.gson.JsonParser.parseReader(new FileReader(this.refFileName)).getAsJsonArray();
+                JsonArray newArray = com.google.gson.JsonParser.parseReader(new FileReader(this.newFileName)).getAsJsonArray();
+                totalRef = refArray.size();
+                totalNew = newArray.size();
+                for (int i = 0; i < refArray.size(); i++) {
+                    JsonObject obj = refArray.get(i).getAsJsonObject();
+                    String id = obj.has("id") ? obj.get("id").getAsString() : String.valueOf(i);
+                    allRefIds.add(id);
+                }
+                for (int i = 0; i < newArray.size(); i++) {
+                    JsonObject obj = newArray.get(i).getAsJsonObject();
+                    String id = obj.has("id") ? obj.get("id").getAsString() : String.valueOf(i);
+                    allNewIds.add(id);
+                }
+            }
+        } catch (Exception e) {
+            
+        }
 
+        // Pour le vrai nombre d'identiques :
+        // 1. Prendre l'ensemble des IDs présents dans les deux fichiers (intersection)
+        // 2. Pour chaque ID, s'il n'a aucune différence (pas dans byEntityId), il est identique
+        Set<String> allIds = new HashSet<>();
+        allIds.addAll(allRefIds);
+        allIds.addAll(allNewIds);
+        int identiques = 0;
+        for (String id : allRefIds) {
+            if (allNewIds.contains(id) && (!byEntityId.containsKey(id) || byEntityId.get(id).isEmpty())) {
+                identiques++;
+            }
+        }
+        int ajouts = 0;
+        int suppressions = 0;
+        for (Difference diff : differences) {
+            if (diff.getType() == ChangeType.ADDITION) ajouts++;
+            if (diff.getType() == ChangeType.DELETION) suppressions++;
+        }
+
+        report.append("=== JSON Differences Report ===\n\n");
+        report.append("=== Summary ===\n");
+        report.append("Reference file: ").append(totalRef).append(" objects\n");
+        report.append("New file: ").append(totalNew).append(" objects\n");
+        report.append("Identical objects: ").append(identiques).append("\n");
+        report.append("Objects added: ").append(ajouts).append("\n");
+        report.append("Objects deleted: ").append(suppressions).append("\n\n");
+
+        // Affichage détaillé des différences 
         for (String entityId : new TreeSet<>(byEntityId.keySet())) {
             List<Difference> entityDiffs = byEntityId.get(entityId);
             report.append("[Object (Security, Third party) ").append(entityId).append("]\n");

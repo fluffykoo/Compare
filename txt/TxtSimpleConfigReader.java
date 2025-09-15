@@ -13,7 +13,20 @@ public class TxtSimpleConfigReader {
     private String reportFileName;
 
     public TxtSimpleConfigReader(String cheminConfig) throws IOException {
-        try (FileReader reader = new FileReader(cheminConfig)) {
+        // Résolution du chemin : absolu = on prend tel quel, sinon on cherche dans le dossier du script Java exécuté
+        File configFile = new File(cheminConfig);
+        if (!configFile.isAbsolute()) {
+            try {
+                File scriptDir = new File(TxtSimpleConfigReader.class.getProtectionDomain().getCodeSource().getLocation().toURI()).getParentFile();
+                File candidate = new File(scriptDir, cheminConfig);
+                if (candidate.exists()) {
+                    configFile = candidate;
+                }
+            } catch (Exception e) {
+                // Fallback : on ne change rien
+            }
+        }
+        try (FileReader reader = new FileReader(configFile)) {
             Gson gson = new Gson();
             Map<String, Object> config = gson.fromJson(reader, Map.class);
 
