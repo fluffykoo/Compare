@@ -1,0 +1,233 @@
+package com.mmd.json;
+
+import com.google.gson.*;
+import java.io.*;
+import java.util.*;
+import java.util.stream.Collectors;
+
+public class JsonComparator {
+
+    private final ConfigurationManager config;
+
+    public JsonComparator(String configFile) throws IOException {
+        this.config = new ConfigurationManager(configFile);
+    }
+
+    // Point d'entrée principal
+    public List<Difference> compare(String referenceFile, String newFile) throws IOException {
+        JsonArray refArray = JsonParser.parseReader(new FileReader(referenceFile)).getAsJsonArray();
+        JsonArray newArray = JsonParser.parseReader(new FileReader(newFile)).getAsJsonArray();
+
+        Map<String, JsonObject> refMap = indexEntities(refArray);
+        Map<String, JsonObject> newMap = indexEntities(newArray);
+
+        List<Difference> differences = new ArrayList<>();
+
+        // Suppressions / modifications
+        for (String entityId : refMap.keySet()) {
+            if (!newMap.containsKey(entityId)) {
+                differences.add(new Difference(entityId, ChangeType.DELETION, "", "", null, null));
+            } else {
+                compareEntities(entityId, refMap.get(entityId), newMap.get(entityId), differences);
+            }
+        }
+
+        // Ajouts
+        for (String entityId : newMap.keySet()) {
+            if (!refMap.containsKey(entityId)) {
+                differences.add(new Difference(entityId, ChangeType.ADDITION, "", "", null, null));
+            }
+        }
+
+        return differences;
+    }
+
+    // Indexation par clé composite
+    private Map<String, JsonObject> indexEntities(JsonArray array) {
+        Map<String, JsonObject> map = new LinkedHashMap<>();
+        for (JsonElement elem : array) {
+            if (!elem.isJsonObject()) continue;
+            JsonObject obj = elem.getAsJsonObject();
+            String id = extractCompositeId(obj, config.getPrimaryKeys(), config.getFallbackKey());
+            if (id != null) map.put(id, obj);
+        }
+        return map;
+    }
+
+    
+    private String extractCompositeId(JsonObject obj, List<String> keys, String fallbackKey) {
+        StringBuilder sb = new StringBuilder();
+        boolean found = false;
+
+        for (String key : keys) {
+            if (obj.has(key)) {
+                JsonElement element = obj.get(key);
+                String value = null;
+
+                if (element.isJsonPrimitive()) {
+                    value = element.getAsString();
+                } else if (element.isJsonObject()) {
+                    JsonObject nested = element.getAsJsonObject();
+                    // Recherche d’un champ lisible dans un sous-objet
+                    for (String sub : List.of("id", "code", "value", "name", "identifier")) {
+                        if (nested.has(sub) && nested.get(sub).isJsonPrimitive()) {
+                            value = nested.get(sub).getAsString();
+                            break;
+                        }
+                    }
+                    // Si rien trouvé, on prend le JSON brut (rare, mais utile pour diagnostic)
+                    if (value == null) {
+                        value = nested.toString();
+                    }
+                } else if (element.isJsonArray()) {
+                    // Cas d’un tableau dans une clé composite → concatène ses valeurs primitives
+                    JsonArray arr = element.getAsJsonArray();
+                    List<String> vals = new ArrayList<>();
+                    for (JsonElement e : arr) {
+                        if (e.isJsonPrimitive()) vals.add(e.getAsString());
+                    }
+                    if (!vals.isEmpty()) value = String.join("|", vals);
+                }
+
+                if (value != null) {
+                    if (found) sb.append("|");
+                    sb.append(value);
+                    found = true;
+                }
+            }
+        }
+
+        if (found) return sb.toString();
+
+        // Clé de secours
+        if (fallbackKey != null && obj.has(fallbackKey)) {
+            JsonElement fb = obj.get(fallbackKey);
+            if (fb.isJsonPrimitive()) return fb.getAsString();
+            if (fb.isJsonObject()) {
+                JsonObject nested = fb.getAsJsonObject();
+                for (String sub : List.of("id", "code", "value", "name")) {
+                    if (nested.has(sub) && nested.get(sub).isJsonPrimitive()) {
+                        return nested.get(sub).getAsString();
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
+    // Comparaison standard entre deux entités JSON
+    private void compareEntities(String entityId, JsonObject ref, JsonObject nov, List<Difference> differences) {
+        Set<String> allKeys = new HashSet<>();
+        allKeys.addAll(ref.keySet());
+        allKeys.addAll(nov.keySet());
+
+        JsonObject subSectionKeys = config.getSubSectionKeys();
+        List<String> ignored = config.getIgnoredFields("");
+
+        for (String key : allKeys) {
+            if (ignored.contains(key)) continue;
+
+            JsonElement refVal = ref.get(key);
+            JsonElement novVal = nov.get(key);
+
+            // Ajout / suppression
+            if (refVal == null && novVal != null) {
+                differences.add(new Difference(entityId, ChangeType.ADDITION, "", key, null, novVal.toString()));
+            } else if (refVal != null && novVal == null) {
+                differences.add(new Difference(entityId, ChangeType.DELETION, "", key, refVal.toString(), null));
+            } else if (refVal != null && novVal != null) {
+                // Cas tableaux imbriqués
+                if (refVal.isJsonArray() && novVal.isJsonArray()) {
+                    List<String> subKeys = config.getSubSectionKeys(key);
+                    compareJsonArraysByKey(entityId, key, subKeys, refVal.getAsJsonArray(), novVal.getAsJsonArray(), differences);
+                }
+                // Cas objets imbriqués
+                else if (refVal.isJsonObject() && novVal.isJsonObject()) {
+                    compareNestedObjects(entityId, key, refVal.getAsJsonObject(), novVal.getAsJsonObject(), differences, subSectionKeys);
+                }
+                // Cas valeur simple
+                else if (!refVal.equals(novVal)) {
+                    differences.add(new Difference(entityId, ChangeType.MODIFICATION, "", key, refVal.toString(), novVal.toString()));
+                }
+            }
+        }
+    }
+
+    // Comparaison d’objets imbriqués
+    private void compareNestedObjects(String entityId, String section, JsonObject ref, JsonObject nov, List<Difference> differences, JsonObject subSectionKeys) {
+        Set<String> allKeys = new HashSet<>();
+        allKeys.addAll(ref.keySet());
+        allKeys.addAll(nov.keySet());
+
+        List<String> ignored = config.getIgnoredFields(section);
+
+        for (String key : allKeys) {
+            if (ignored.contains(key)) continue;
+
+            JsonElement refVal = ref.get(key);
+            JsonElement novVal = nov.get(key);
+
+            if (refVal == null && novVal != null) {
+                differences.add(new Difference(entityId, ChangeType.ADDITION, section, key, null, novVal.toString()));
+            } else if (refVal != null && novVal == null) {
+                differences.add(new Difference(entityId, ChangeType.DELETION, section, key, refVal.toString(), null));
+            } else if (refVal != null && novVal != null && !refVal.equals(novVal)) {
+                if (refVal.isJsonObject() && novVal.isJsonObject()) {
+                    compareNestedObjects(entityId, section + "." + key, refVal.getAsJsonObject(), novVal.getAsJsonObject(), differences, subSectionKeys);
+                } else {
+                    differences.add(new Difference(entityId, ChangeType.MODIFICATION, section, key, refVal.toString(), novVal.toString()));
+                }
+            }
+        }
+    }
+
+    // Comparaison de tableaux d’objets via clés composites
+    private void compareJsonArraysByKey(String entityId, String section, List<String> subKeys, JsonArray refArray, JsonArray novArray, List<Difference> differences) {
+        Map<String, JsonObject> mapRef = new LinkedHashMap<>();
+        Map<String, JsonObject> mapNov = new LinkedHashMap<>();
+
+        for (JsonElement elem : refArray) {
+            if (elem.isJsonObject()) {
+                JsonObject obj = elem.getAsJsonObject();
+                String key = generateCompositeKey(obj, subKeys);
+                mapRef.put(key, obj);
+            }
+        }
+        for (JsonElement elem : novArray) {
+            if (elem.isJsonObject()) {
+                JsonObject obj = elem.getAsJsonObject();
+                String key = generateCompositeKey(obj, subKeys);
+                mapNov.put(key, obj);
+            }
+        }
+
+        Set<String> allKeys = new HashSet<>(mapRef.keySet());
+        allKeys.addAll(mapNov.keySet());
+
+        for (String key : allKeys) {
+            JsonObject refObj = mapRef.get(key);
+            JsonObject novObj = mapNov.get(key);
+
+            if (refObj == null && novObj != null) {
+                differences.add(new Difference(entityId, ChangeType.ADDITION, section, key, null, novObj.toString()));
+            } else if (refObj != null && novObj == null) {
+                differences.add(new Difference(entityId, ChangeType.DELETION, section, key, refObj.toString(), null));
+            } else if (refObj != null && novObj != null) {
+                compareEntities(entityId, refObj, novObj, differences);
+            }
+        }
+    }
+
+    // Génère une clé composite pour un tableau d’objets JSON
+    private String generateCompositeKey(JsonObject obj, List<String> keys) {
+        if (keys == null || keys.isEmpty()) return obj.toString();
+        return keys.stream()
+                .map(k -> obj.has(k) && obj.get(k).isJsonPrimitive() ? obj.get(k).getAsString() : "")
+                .collect(Collectors.joining("|"));
+    }
+
+    public ConfigurationManager getConfig() {
+        return this.config;
+    }
+}
