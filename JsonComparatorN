@@ -1,0 +1,15 @@
+private void compareEntities(String id, JsonObject refObj, JsonObject newObj, List<Difference> differences) {
+    for (String key : refObj.keySet()) {
+        if (!newObj.has(key)) {
+            differences.add(new Difference(id, ChangeType.DELETION, "", key, refObj.get(key).toString(), null));
+        } else if (!Objects.equals(refObj.get(key), newObj.get(key))) {
+            differences.add(new Difference(id, ChangeType.MODIFICATION, "", key, refObj.get(key).toString(), newObj.get(key).toString()));
+        }
+    }
+
+    for (String key : newObj.keySet()) {
+        if (!refObj.has(key)) {
+            differences.add(new Difference(id, ChangeType.ADDITION, "", key, null, newObj.get(key).toString()));
+        }
+    }
+}
