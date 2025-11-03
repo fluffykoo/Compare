@@ -1,17 +1,19 @@
 package com.mmd.json;
 
 import com.google.gson.*;
-import java.io.*;
+import java.io.Reader;
+import java.io.IOException;
+import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.*;
 
 /**
  * Compare deux fichiers JSON.
- * - Top-level Array => chaque élément est une entité.
- * - Top-level Object => entité unique "ROOT".
- * ID d’entité = valeur trouvée en priorité via primary_key,
- * sinon via fallback_key, en recherchant au besoin en profondeur.
+ * - Racine = tableau : chaque élément est une entité.
+ * - Racine = objet   : entité unique "ROOT".
+ * ID d’entité = primary_key (avec éventuelle sous-clé), sinon fallback_key
+ * cherché en profondeur.
  */
 public class JsonComparator {
 
@@ -36,7 +38,7 @@ public class JsonComparator {
             if (refEl.isJsonArray() && newEl.isJsonArray()) {
                 compareJsonArrays(refEl.getAsJsonArray(), newEl.getAsJsonArray(), diffs);
             } else if (refEl.isJsonObject() && newEl.isJsonObject()) {
-                compareEntities("ROOT", refEl.getAsJsonObject(), newEl.getAsJsonObject(), diffs);
+                compareEntities("ROOT", "", refEl.getAsJsonObject(), newEl.getAsJsonObject(), diffs);
             } else {
                 // types différents en racine
                 diffs.add(new Difference("ROOT", ChangeType.MODIFICATION, "", "(root)",
@@ -46,8 +48,8 @@ public class JsonComparator {
         }
     }
 
-    // === Indexation d’un tableau par ID ===
-    private Map<String, JsonObject> indexEntities(JsonArray arr) {
+    // === Indexation d’un tableau par ID (publique pour displaySummary) ===
+    public Map<String, JsonObject> indexEntities(JsonArray arr) {
         Map<String, JsonObject> map = new LinkedHashMap<>();
         for (JsonElement e : arr) {
             if (!e.isJsonObject()) continue;
@@ -67,7 +69,7 @@ public class JsonComparator {
             if (!newMap.containsKey(id)) {
                 diffs.add(new Difference(id, ChangeType.DELETION, "", "", null, null));
             } else {
-                compareEntities(id, refMap.get(id), newMap.get(id), diffs);
+                compareEntities(id, "", refMap.get(id), newMap.get(id), diffs);
             }
         }
         // ajouts
@@ -78,51 +80,19 @@ public class JsonComparator {
         }
     }
 
-    // === Comparaison détaillée d’une entité (objets/arrays/propriétés) ===
-    private void compareEntities(String entityId, JsonObject refObj, JsonObject newObj, List<Difference> diffs) {
-        Set<String> keys = new TreeSet<>();
-        keys.addAll(refObj.keySet());
-        keys.addAll(newObj.keySet());
+    // === Comparaison détaillée d’une entité ===
+    private void compareEntities(String entityId, String section,
+                                 JsonObject refObj, JsonObject newObj, List<Difference> diffs) {
 
+        Set<String> allKeys = new TreeSet<>();
+        allKeys.addAll(refObj.keySet());
+        allKeys.addAll(newObj.keySet());
+
+        // champs ignorés pour la section courante
         Map<String, List<String>> ignored = config.getIgnoredFields();
+        List<String> ignoredInSection = ignored.getOrDefault(section, Collections.<String>emptyList());
 
-        for (String key : keys) {
-            // ignorer clés configurées par section
-            if (ignored.getOrDefault(key, Collections.emptyList()).contains(key)) continue;
-
-            JsonElement v1 = refObj.has(key) ? refObj.get(key) : null;
-            JsonElement v2 = newObj.has(key) ? newObj.get(key) : null;
-
-            if (v1 == null && v2 != null) {
-                handleAddition(entityId, "", key, v2, diffs);
-            } else if (v1 != null && v2 == null) {
-                diffs.add(new Difference(entityId, ChangeType.DELETION, "", key, stringify(v1), null));
-            } else if (v1 != null) {
-                // même clé présente
-                if (v1.isJsonObject() && v2.isJsonObject()) {
-                    compareNestedObjects(entityId, key, v1.getAsJsonObject(), v2.getAsJsonObject(), diffs);
-                } else if (v1.isJsonArray() && v2.isJsonArray()) {
-                    compareJsonArraysByKey(entityId, key, v1.getAsJsonArray(), v2.getAsJsonArray(), diffs);
-                } else {
-                    if (!Objects.equals(stringify(v1), stringify(v2))) {
-                        diffs.add(new Difference(entityId, ChangeType.MODIFICATION, "", key,
-                                stringify(v1), stringify(v2)));
-                    }
-                }
-            }
-        }
-    }
-
-    private void compareNestedObjects(String entityId, String section,
-                                      JsonObject refObj, JsonObject newObj, List<Difference> diffs) {
-        Set<String> keys = new TreeSet<>();
-        keys.addAll(refObj.keySet());
-        keys.addAll(newObj.keySet());
-
-        Map<String, List<String>> ignored = config.getIgnoredFields();
-        List<String> ignoredInSection = ignored.getOrDefault(section, Collections.emptyList());
-
-        for (String key : keys) {
+        for (String key : allKeys) {
             if (ignoredInSection.contains(key)) continue;
 
             JsonElement v1 = refObj.has(key) ? refObj.get(key) : null;
@@ -130,20 +100,26 @@ public class JsonComparator {
 
             if (v1 == null && v2 != null) {
                 handleAddition(entityId, section, key, v2, diffs);
-            } else if (v1 != null && v2 == null) {
+                continue;
+            }
+            if (v1 != null && v2 == null) {
                 diffs.add(new Difference(entityId, ChangeType.DELETION, section, key, stringify(v1), null));
-            } else if (v1 != null) {
-                if (v1.isJsonObject() && v2.isJsonObject()) {
-                    compareNestedObjects(entityId, section + pathSep(section) + key,
-                            v1.getAsJsonObject(), v2.getAsJsonObject(), diffs);
-                } else if (v1.isJsonArray() && v2.isJsonArray()) {
-                    compareJsonArraysByKey(entityId, section + pathSep(section) + key,
-                            v1.getAsJsonArray(), v2.getAsJsonArray(), diffs);
-                } else {
-                    if (!Objects.equals(stringify(v1), stringify(v2))) {
-                        diffs.add(new Difference(entityId, ChangeType.MODIFICATION, section, key,
-                                stringify(v1), stringify(v2)));
-                    }
+                continue;
+            }
+            if (v1 == null) continue; // les deux null n’arrivent pas ici
+
+            if (v1.isJsonObject() && v2.isJsonObject()) {
+                // descente de section
+                String nextSection = section.isEmpty() ? key : section + "." + key;
+                compareEntities(entityId, nextSection, v1.getAsJsonObject(), v2.getAsJsonObject(), diffs);
+            } else if (v1.isJsonArray() && v2.isJsonArray()) {
+                String nextSection = section.isEmpty() ? key : section + "." + key;
+                compareJsonArraysByKey(entityId, nextSection, v1.getAsJsonArray(), v2.getAsJsonArray(), diffs);
+            } else {
+                String s1 = stringify(v1);
+                String s2 = stringify(v2);
+                if (!Objects.equals(s1, s2)) {
+                    diffs.add(new Difference(entityId, ChangeType.MODIFICATION, section, key, s1, s2));
                 }
             }
         }
@@ -151,23 +127,21 @@ public class JsonComparator {
 
     private void compareJsonArraysByKey(String entityId, String section,
                                         JsonArray refArr, JsonArray newArr, List<Difference> diffs) {
-        // Si ce sont des tableaux de primitives -> comparer ensembliste
+        // tableaux de primitives -> diff ensembliste
         if (isPrimitiveArray(refArr) && isPrimitiveArray(newArr)) {
-            Set<String> a = toStringSet(refArr);
-            Set<String> b = toStringSet(newArr);
-            for (String x : diffOnly(a, b)) {
+            Set<String> A = toStringSet(refArr);
+            Set<String> B = toStringSet(newArr);
+            for (String x : diffOnly(A, B))
                 diffs.add(new Difference(entityId, ChangeType.DELETION, section, "(item)", x, null));
-            }
-            for (String x : diffOnly(b, a)) {
+            for (String x : diffOnly(B, A))
                 diffs.add(new Difference(entityId, ChangeType.ADDITION, section, "(item)", null, x));
-            }
             return;
         }
 
-        // Tableaux d’objets -> on indexe par clé(s) configurée(s) pour la section
+        // tableaux d’objets -> indexation par clés de sous-section si dispo
         List<String> keys = config.getSubSectionKeys(section);
-        if (keys.isEmpty()) {
-            // fallback: comparer par toString() de l’objet
+        if (keys == null || keys.isEmpty()) {
+            // fallback: comparer ensemblistement via toString()
             Set<String> A = toStringSet(refArr);
             Set<String> B = toStringSet(newArr);
             for (String x : diffOnly(A, B))
@@ -184,7 +158,7 @@ public class JsonComparator {
             if (!B.containsKey(k)) {
                 diffs.add(new Difference(entityId, ChangeType.DELETION, section, k, stringify(A.get(k)), null));
             } else {
-                compareNestedObjects(entityId, section, A.get(k), B.get(k), diffs);
+                compareEntities(entityId, section, A.get(k), B.get(k), diffs);
             }
         }
         for (String k : B.keySet()) {
@@ -197,19 +171,17 @@ public class JsonComparator {
     private void handleAddition(String entityId, String section, String key,
                                 JsonElement newVal, List<Difference> diffs) {
         if (newVal.isJsonObject()) {
-            compareNestedObjects(entityId, section + pathSep(section) + key,
-                    new JsonObject(), newVal.getAsJsonObject(), diffs);
+            String nextSection = section.isEmpty() ? key : section + "." + key;
+            compareEntities(entityId, nextSection, new JsonObject(), newVal.getAsJsonObject(), diffs);
         } else if (newVal.isJsonArray()) {
-            compareJsonArraysByKey(entityId, section + pathSep(section) + key,
-                    new JsonArray(), newVal.getAsJsonArray(), diffs);
+            String nextSection = section.isEmpty() ? key : section + "." + key;
+            compareJsonArraysByKey(entityId, nextSection, new JsonArray(), newVal.getAsJsonArray(), diffs);
         } else {
             diffs.add(new Difference(entityId, ChangeType.ADDITION, section, key, null, stringify(newVal)));
         }
     }
 
     // === Utilitaires ===
-
-    private static String pathSep(String section) { return section.isEmpty() ? "" : "."; }
 
     private static boolean isPrimitiveArray(JsonArray arr) {
         for (JsonElement e : arr) if (!e.isJsonPrimitive()) return false;
@@ -246,14 +218,24 @@ public class JsonComparator {
             if (v == null) return null;
             parts.add(stringify(v));
         }
-        return String.join("|", parts);
+        return parts.isEmpty() ? null : join(parts, "|");
+    }
+
+    // concat sans String.join pour rester très compatible
+    private static String join(List<String> parts, String sep) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < parts.size(); i++) {
+            if (i > 0) sb.append(sep);
+            sb.append(parts.get(i));
+        }
+        return sb.toString();
     }
 
     private String extractEntityId(JsonObject obj) {
         // 1) primary_key
         String id = lookupByKeyName(obj, config.getPrimaryKey(), config.getFallbackKey());
         if (id != null) return id;
-        // 2) fallback_key global
+        // 2) fallback_key global cherché en profondeur
         return deepFindValueByKey(obj, config.getFallbackKey());
     }
 
@@ -275,9 +257,10 @@ public class JsonComparator {
         return null;
     }
 
+    // Version Java 8: pas de stream().toList()
     private String deepFindValueByKey(JsonObject obj, String keyName) {
         if (keyName == null) return null;
-        Deque<JsonElement> stack = new ArrayDeque<>();
+        Deque<JsonElement> stack = new ArrayDeque<JsonElement>();
         stack.push(obj);
         while (!stack.isEmpty()) {
             JsonElement cur = stack.pop();
@@ -285,10 +268,12 @@ public class JsonComparator {
                 JsonObject o = cur.getAsJsonObject();
                 if (o.has(keyName) && o.get(keyName).isJsonPrimitive())
                     return o.get(keyName).getAsString();
-                for (JsonElement v : o.entrySet().stream().map(Map.Entry::getValue).toList())
-                    stack.push(v);
+                for (Map.Entry<String, JsonElement> e : o.entrySet()) {
+                    stack.push(e.getValue());
+                }
             } else if (cur.isJsonArray()) {
-                for (JsonElement v : cur.getAsJsonArray()) stack.push(v);
+                JsonArray a = cur.getAsJsonArray();
+                for (JsonElement v : a) stack.push(v);
             }
         }
         return null;
