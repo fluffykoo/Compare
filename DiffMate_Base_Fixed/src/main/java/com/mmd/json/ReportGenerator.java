@@ -6,146 +6,146 @@ import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
+import java.text.SimpleDateFormat;
 import java.util.*;
 
 public class ReportGenerator {
-    private final Path outDir;
+
+    private final String outputFolder;
     private final String baseName;
     private final String timestamp;
-    private String refFileName;
-    private String newFileName;
 
-    public ReportGenerator(String outFolder, String baseName) {
-        this.outDir = Paths.get(outFolder);
-        this.baseName = (baseName == null || baseName.isEmpty()) ? "JSONReport" : baseName;
-        this.timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+    public ReportGenerator(String outputFolder, String baseName) {
+        this.outputFolder = outputFolder;
+        this.baseName = baseName;
+        this.timestamp = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
     }
 
-    public void setComparedFiles(String ref, String neu) {
-        this.refFileName = ref;
-        this.newFileName = neu;
-    }
-
-    private Path file(String ext) throws IOException {
-        Files.createDirectories(outDir);
-        return outDir.resolve(baseName + "_" + timestamp + "." + ext);
-    }
-
-    // === TXT ===
+    // =====================================================
+    // TXT
+    // =====================================================
     public void generateTextReport(List<Difference> diffs) throws IOException {
-        try (BufferedWriter w = Files.newBufferedWriter(file("txt"), StandardCharsets.UTF_8)) {
-            if (refFileName != null && newFileName != null) {
-                w.write("Compared files:\n");
-                w.write(" - Reference file : " + refFileName + "\n");
-                w.write(" - New file       : " + newFileName + "\n\n");
-            }
-            Map<String, List<Difference>> byId = new TreeMap<>();
-            for (Difference d : diffs) byId.computeIfAbsent(d.getEntityId(), k -> new ArrayList<>()).add(d);
-
-            for (String id : byId.keySet()) {
-                w.write("[Object] " + id + "\n");
-                Map<ChangeType, List<Difference>> byType = new EnumMap<>(ChangeType.class);
-                for (Difference d : byId.get(id))
-                    byType.computeIfAbsent(d.getType(), t -> new ArrayList<>()).add(d);
-
-                for (ChangeType t : ChangeType.values()) {
-                    List<Difference> L = byType.get(t);
-                    if (L == null || L.isEmpty()) continue;
-                    w.write("[" + t + "]\n");
-                    for (Difference d : L) {
-                        w.write(" * Section: " + d.getSection() + " | Key: " + d.getKey() + "\n");
-                        if (t == ChangeType.DELETION) {
-                            w.write("   - Reference file value: " + d.getOldValue() + "\n");
-                        } else if (t == ChangeType.ADDITION) {
-                            w.write("   + New file value: " + d.getNewValue() + "\n");
-                        } else {
-                            w.write("   ~ Old: " + d.getOldValue() + "\n");
-                            w.write("   ~ New: " + d.getNewValue() + "\n");
-                        }
-                    }
-                    w.write("\n");
+        Path out = Paths.get(outputFolder, baseName + "_" + timestamp + ".txt");
+        try (BufferedWriter writer = Files.newBufferedWriter(out, StandardCharsets.UTF_8)) {
+            for (Difference d : diffs) {
+                writer.write("[Object] " + d.getEntityId() + "\n");
+                writer.write("[" + d.getType().name() + "]\n");
+                writer.write("* Section: " + d.getSection() + " | Key: " + d.getField() + "\n");
+                if (d.getType() == ChangeType.MODIFICATION) {
+                    writer.write("~ Old: " + safe(d.getOldValue()) + "\n");
+                    writer.write("~ New: " + safe(d.getNewValue()) + "\n");
+                } else if (d.getType() == ChangeType.ADDITION) {
+                    writer.write("+ New Value: " + safe(d.getNewValue()) + "\n");
+                } else if (d.getType() == ChangeType.DELETION) {
+                    writer.write("- Reference file value: " + safe(d.getOldValue()) + "\n");
+                } else if (d.getType() == ChangeType.IGNORED) {
+                    writer.write("~ Ignored field from config\n");
                 }
+                writer.write("\n");
+            }
+        }
+        System.out.println("[TXT] Report written → " + out.toAbsolutePath());
+    }
+
+    // =====================================================
+    // CSV (sans IGNORED)
+    // =====================================================
+    public void generateCsvReport(List<Difference> diffs) throws IOException {
+        Path out = Paths.get(outputFolder, baseName + "_" + timestamp + ".csv");
+        try (BufferedWriter w = Files.newBufferedWriter(out, StandardCharsets.UTF_8)) {
+            w.write("Type;EntityId;Section;Field;OldValue;NewValue\n");
+            for (Difference d : diffs) {
+                if (d.getType() == ChangeType.IGNORED) continue; // exclusion
+                w.write(String.join(";",
+                        d.getType().toString(),
+                        nullToEmpty(d.getEntityId()),
+                        nullToEmpty(d.getSection()),
+                        nullToEmpty(d.getField()),
+                        nullToEmpty(d.getOldValue()),
+                        nullToEmpty(d.getNewValue())
+                ));
                 w.write("\n");
             }
         }
+        System.out.println("[CSV] Report written → " + out.toAbsolutePath());
     }
 
-    // === CSV ===
-    public void generateCsvReport(List<Difference> diffs) throws IOException {
-        String[] headers = { "ID", "Type", "Section", "Key", "Old Value", "New Value" };
-        try (BufferedWriter w = Files.newBufferedWriter(file("csv"), StandardCharsets.UTF_8)) {
-            w.write(String.join(";", headers)); w.newLine();
-            for (Difference d : diffs) {
-                String[] row = {
-                        d.getEntityId(),
-                        d.getType().name(),
-                        d.getSection(),
-                        d.getKey(),
-                        safe(d.getOldValue()),
-                        safe(d.getNewValue())
-                };
-                w.write(String.join(";", escapeCsv(row)));
-                w.newLine();
-            }
-        }
-    }
-
-    // === XLSX ===
+    // =====================================================
+    // EXCEL (sans IGNORED)
+    // =====================================================
     public void generateExcelReport(List<Difference> diffs) throws IOException {
+        Path out = Paths.get(outputFolder, baseName + "_" + timestamp + ".xlsx");
         try (Workbook wb = new XSSFWorkbook()) {
-            Sheet sh = wb.createSheet("Differences");
-            String[] headers = { "ID", "Type", "Section", "Key", "Old Value", "New Value" };
+            Sheet sheet = wb.createSheet("Differences");
 
-            // header
-            Row h = sh.createRow(0);
-            for (int i = 0; i < headers.length; i++) h.createCell(i).setCellValue(headers[i]);
+            // En-tête
+            CellStyle headerStyle = wb.createCellStyle();
+            Font bold = wb.createFont();
+            bold.setBold(true);
+            headerStyle.setFont(bold);
+            headerStyle.setFillForegroundColor(IndexedColors.GREY_25_PERCENT.getIndex());
+            headerStyle.setFillPattern(FillPatternType.SOLID_FOREGROUND);
 
-            // simple styles by type
-            CellStyle add = wb.createCellStyle();
-            CellStyle del = wb.createCellStyle();
-            CellStyle mod = wb.createCellStyle();
-            add.setFillForegroundColor(IndexedColors.LIGHT_GREEN.getIndex()); add.setFillPattern(FillPatternType.SOLID_FOREGROUND);
-            del.setFillForegroundColor(IndexedColors.ROSE.getIndex());        del.setFillPattern(FillPatternType.SOLID_FOREGROUND);
-            mod.setFillForegroundColor(IndexedColors.LIGHT_YELLOW.getIndex());mod.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+            // Styles colorés
+            Map<ChangeType, CellStyle> styles = new EnumMap<>(ChangeType.class);
+            styles.put(ChangeType.ADDITION, createStyle(wb, IndexedColors.LIGHT_GREEN));
+            styles.put(ChangeType.MODIFICATION, createStyle(wb, IndexedColors.LIGHT_YELLOW));
+            styles.put(ChangeType.DELETION, createStyle(wb, IndexedColors.ROSE));
 
-            int r = 1;
-            for (Difference d : diffs) {
-                Row row = sh.createRow(r++);
-                row.createCell(0).setCellValue(d.getEntityId());
-                row.createCell(1).setCellValue(d.getType().name());
-                row.createCell(2).setCellValue(d.getSection());
-                row.createCell(3).setCellValue(d.getKey());
-                row.createCell(4).setCellValue(safe(d.getOldValue()));
-                row.createCell(5).setCellValue(safe(d.getNewValue()));
-
-                CellStyle st = switch (d.getType()) {
-                    case ADDITION -> add;
-                    case DELETION -> del;
-                    default -> mod;
-                };
-                for (int c = 0; c < 6; c++) row.getCell(c).setCellStyle(st);
+            // Header row
+            Row header = sheet.createRow(0);
+            String[] headers = {"Type", "EntityId", "Section", "Field", "OldValue", "NewValue"};
+            for (int i = 0; i < headers.length; i++) {
+                Cell c = header.createCell(i);
+                c.setCellValue(headers[i]);
+                c.setCellStyle(headerStyle);
             }
-            for (int c = 0; c < 6; c++) sh.autoSizeColumn(c);
 
-            try (OutputStream os = Files.newOutputStream(file("xlsx"))) {
+            // Contenu
+            int rowIdx = 1;
+            for (Difference d : diffs) {
+                if (d.getType() == ChangeType.IGNORED) continue;
+
+                Row r = sheet.createRow(rowIdx++);
+                CellStyle st = styles.getOrDefault(d.getType(), wb.createCellStyle());
+                fillCell(r, 0, d.getType().toString(), st);
+                fillCell(r, 1, d.getEntityId(), st);
+                fillCell(r, 2, d.getSection(), st);
+                fillCell(r, 3, d.getField(), st);
+                fillCell(r, 4, d.getOldValue(), st);
+                fillCell(r, 5, d.getNewValue(), st);
+            }
+
+            for (int i = 0; i < headers.length; i++) sheet.autoSizeColumn(i);
+
+            try (OutputStream os = Files.newOutputStream(out)) {
                 wb.write(os);
             }
         }
+        System.out.println("[XLSX] Report written → " + out.toAbsolutePath());
     }
 
-    private static String safe(String s) { return s == null ? "" : s; }
+    // =====================================================
+    // Helpers
+    // =====================================================
+    private static String safe(String s) {
+        return s == null ? "" : s;
+    }
 
-    private static String[] escapeCsv(String[] fields) {
-        String[] out = new String[fields.length];
-        for (int i = 0; i < fields.length; i++) {
-            String f = fields[i] == null ? "" : fields[i];
-            if (f.contains(";") || f.contains("\"") || f.contains("\n")) {
-                f = "\"" + f.replace("\"", "\"\"") + "\"";
-            }
-            out[i] = f;
-        }
-        return out;
+    private static String nullToEmpty(String s) {
+        return s == null ? "" : s.replace("\n", " ").replace("\r", " ");
+    }
+
+    private static void fillCell(Row row, int col, String value, CellStyle style) {
+        Cell cell = row.createCell(col);
+        cell.setCellValue(value == null ? "" : value);
+        cell.setCellStyle(style);
+    }
+
+    private static CellStyle createStyle(Workbook wb, IndexedColors color) {
+        CellStyle st = wb.createCellStyle();
+        st.setFillForegroundColor(color.getIndex());
+        st.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+        return st;
     }
 }
