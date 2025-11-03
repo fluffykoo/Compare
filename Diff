@@ -1,17 +1,14 @@
 package com.mmd.json;
 
-import com.google.gson.JsonElement;
-
 public class Difference {
     private String entityId;
     private ChangeType type;
     private String section;
     private String key;
-    private JsonElement oldValue;
-    private JsonElement newValue;
+    private String oldValue;
+    private String newValue;
 
-    public Difference(String entityId, ChangeType type, String section, String key,
-                      JsonElement oldValue, JsonElement newValue) {
+    public Difference(String entityId, ChangeType type, String section, String key, String oldValue, String newValue) {
         this.entityId = entityId;
         this.type = type;
         this.section = section;
@@ -24,8 +21,8 @@ public class Difference {
     public ChangeType getType() { return type; }
     public String getSection() { return section; }
     public String getKey() { return key; }
-    public JsonElement getOldValue() { return oldValue; }
-    public JsonElement getNewValue() { return newValue; }
+    public String getOldValue() { return oldValue; }
+    public String getNewValue() { return newValue; }
 
     @Override
     public String toString() {
@@ -34,8 +31,8 @@ public class Difference {
                 ", type=" + type +
                 ", section='" + section + '\'' +
                 ", key='" + key + '\'' +
-                ", oldValue=" + (oldValue != null ? oldValue.toString() : "null") +
-                ", newValue=" + (newValue != null ? newValue.toString() : "null") +
+                ", oldValue='" + oldValue + '\'' +
+                ", newValue='" + newValue + '\'' +
                 '}';
     }
 }
