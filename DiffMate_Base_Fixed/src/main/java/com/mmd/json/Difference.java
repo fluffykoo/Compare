@@ -1,14 +1,15 @@
 package com.mmd.json;
 
 public class Difference {
-    private String entityId;
-    private ChangeType type;
-    private String section;
-    private String key;
-    private String oldValue;
-    private String newValue;
+    private final String entityId;
+    private final ChangeType type;
+    private final String section;
+    private final String key;
+    private final String oldValue;
+    private final String newValue;
 
-    public Difference(String entityId, ChangeType type, String section, String key, String oldValue, String newValue) {
+    public Difference(String entityId, ChangeType type, String section, String key,
+                      String oldValue, String newValue) {
         this.entityId = entityId;
         this.type = type;
         this.section = section;
