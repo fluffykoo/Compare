@@ -104,3 +104,19 @@ public class CompareJsonFiles {
         System.out.printf("Objects deleted: %d%n", deleted);
     }
 }
+
+
+System.out.println("\nIgnored fields:");
+com.google.gson.JsonObject ignored = comp.getConfig().getIgnoredFields(); // JsonObject
+
+if (ignored != null) {
+    for (java.util.Map.Entry<String, com.google.gson.JsonElement> entry : ignored.entrySet()) {
+        System.out.print(" " + entry.getKey() + " : ");
+        for (com.google.gson.JsonElement f : entry.getValue().getAsJsonArray()) {
+            System.out.print(f.getAsString() + " ");
+        }
+        System.out.println();
+    }
+} else {
+    System.out.println("  <none>");
+}
