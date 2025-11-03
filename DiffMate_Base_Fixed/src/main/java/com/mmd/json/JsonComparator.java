@@ -12,8 +12,6 @@ public class JsonComparator {
 
     public JsonComparator(String configFile) throws IOException {
         this.config = new ConfigurationManager(configFile);
-
-        // diagnostic : champs ignorés détectés
         System.out.println("=== Ignored fields loaded from config ===");
         config.getIgnoredFields().forEach((section, fields) ->
             System.out.println("Section: " + section + " → " + fields)
@@ -23,6 +21,7 @@ public class JsonComparator {
 
     public ConfigurationManager getConfig() { return config; }
 
+    // === Entrée principale ===
     public List<Difference> compare(String refFile, String newFile) throws IOException {
         try (Reader refR = Files.newBufferedReader(new File(refFile).toPath(), StandardCharsets.UTF_8);
              Reader newR = Files.newBufferedReader(new File(newFile).toPath(), StandardCharsets.UTF_8)) {
@@ -188,7 +187,125 @@ public class JsonComparator {
         }
     }
 
+    // === Comparaison des tableaux (corrigée) ===
+    private void compareJsonArraysByKey(String entityId, String section,
+                                        JsonArray refArr, JsonArray newArr, List<Difference> diffs) {
+
+        Map<String, List<String>> ignored = config.getIgnoredFields();
+        List<String> ignoredInSection = ignored.getOrDefault(section, Collections.emptyList());
+
+        // Cas 1 : tableaux de primitives
+        if (isPrimitiveArray(refArr) && isPrimitiveArray(newArr)) {
+            Set<String> a = toStringSet(refArr);
+            Set<String> b = toStringSet(newArr);
+
+            for (String x : diffOnly(a, b))
+                if (!ignoredInSection.contains(x))
+                    diffs.add(new Difference(entityId, ChangeType.DELETION, section, "(item)", x, null));
+
+            for (String x : diffOnly(b, a))
+                if (!ignoredInSection.contains(x))
+                    diffs.add(new Difference(entityId, ChangeType.ADDITION, section, "(item)", null, x));
+            return;
+        }
+
+        // Cas 2 : tableaux d’objets
+        List<String> keys = config.getSubSectionKeys(section);
+        if (keys.isEmpty()) {
+            Set<String> A = toStringSet(refArr);
+            Set<String> B = toStringSet(newArr);
+            for (String x : diffOnly(A, B))
+                diffs.add(new Difference(entityId, ChangeType.DELETION, section, "(object)", x, null));
+            for (String x : diffOnly(B, A))
+                diffs.add(new Difference(entityId, ChangeType.ADDITION, section, "(object)", null, x));
+            return;
+        }
+
+        Map<String, JsonObject> A = indexByCompositeKey(refArr, keys);
+        Map<String, JsonObject> B = indexByCompositeKey(newArr, keys);
+
+        for (String k : A.keySet()) {
+            boolean skip = ignoredInSection.contains(k);
+            if (!skip) {
+                String qualifiedKey = section.isEmpty() ? k : section + "." + k;
+                for (Map.Entry<String, List<String>> entry : ignored.entrySet()) {
+                    if (entry.getValue().contains(qualifiedKey) || entry.getValue().contains(k)) {
+                        skip = true;
+                        break;
+                    }
+                }
+            }
+            if (skip) {
+                diffs.add(new Difference(entityId, ChangeType.IGNORED, section, k, "(ignored)", "(ignored)"));
+                continue;
+            }
+            if (!B.containsKey(k)) {
+                diffs.add(new Difference(entityId, ChangeType.DELETION, section, k, stringify(A.get(k)), null));
+            } else {
+                compareNestedObjects(entityId, section, A.get(k), B.get(k), diffs);
+            }
+        }
+
+        for (String k : B.keySet()) {
+            if (!A.containsKey(k)) {
+                boolean skip = ignoredInSection.contains(k);
+                if (!skip) {
+                    String qualifiedKey = section.isEmpty() ? k : section + "." + k;
+                    for (Map.Entry<String, List<String>> entry : ignored.entrySet()) {
+                        if (entry.getValue().contains(qualifiedKey) || entry.getValue().contains(k)) {
+                            skip = true;
+                            break;
+                        }
+                    }
+                }
+                if (skip) {
+                    diffs.add(new Difference(entityId, ChangeType.IGNORED, section, k, "(ignored)", "(ignored)"));
+                    continue;
+                }
+                diffs.add(new Difference(entityId, ChangeType.ADDITION, section, k, null, stringify(B.get(k))));
+            }
+        }
+    }
+
     // === Utilitaires ===
+    private static boolean isPrimitiveArray(JsonArray arr) {
+        for (JsonElement e : arr) if (!e.isJsonPrimitive()) return false;
+        return true;
+    }
+
+    private static Set<String> toStringSet(JsonArray arr) {
+        Set<String> s = new LinkedHashSet<>();
+        for (JsonElement e : arr) s.add(stringify(e));
+        return s;
+    }
+
+    private static Set<String> diffOnly(Set<String> a, Set<String> b) {
+        Set<String> out = new LinkedHashSet<>(a);
+        out.removeAll(b);
+        return out;
+    }
+
+    private Map<String, JsonObject> indexByCompositeKey(JsonArray arr, List<String> keys) {
+        Map<String, JsonObject> map = new LinkedHashMap<>();
+        for (JsonElement e : arr) {
+            if (!e.isJsonObject()) continue;
+            JsonObject o = e.getAsJsonObject();
+            String k = compositeValue(o, keys);
+            if (k != null) map.put(k, o);
+        }
+        return map;
+    }
+
+    private String compositeValue(JsonObject obj, List<String> keys) {
+        List<String> parts = new ArrayList<>();
+        for (String k : keys) {
+            JsonElement v = obj.get(k);
+            if (v == null) return null;
+            parts.add(stringify(v));
+        }
+        return String.join("|", parts);
+    }
+
     private void handleAddition(String entityId, String section, String key,
                                 JsonElement newVal, List<Difference> diffs) {
         diffs.add(new Difference(entityId, ChangeType.ADDITION, section, key, null, stringify(newVal)));
