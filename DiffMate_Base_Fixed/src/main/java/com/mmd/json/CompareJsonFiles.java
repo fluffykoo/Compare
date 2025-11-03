@@ -1,69 +1,52 @@
 package com.mmd.json;
 
-import com.google.gson.*;
 import java.io.*;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.*;
 import java.time.*;
 import java.time.format.*;
 import java.util.*;
+import com.google.gson.*;
 
 public class CompareJsonFiles {
 
     public static void main(String[] args) throws Exception {
-        if (args.length != 6 && args.length != 5) {
-            System.out.println("Usage: java -jar DiffMate.jar JSON <refFile> <newFile> <rapportFolder> <configFile> <outputBaseName>");
+        if (args.length < 4 || args.length > 5) {
+            System.out.println(
+                "Usage: java CompareJsonFiles <refFile> <newFile> <outputFolder> <configFile> [reportFileName]"
+            );
             return;
         }
-        // mode demandé: JSON
-        int shift = args.length == 6 ? 1 : 0; // si tu gardes un wrapper qui passe "JSON"
-        String refFile  = args[0 + shift];
-        String newFile  = args[1 + shift];
-        String outDir   = args[2 + shift];
-        String cfgFile  = args[3 + shift];
-        String baseName = args[4 + shift];
 
-        JsonComparator comparator = new JsonComparator(cfgFile);
-        List<Difference> diffs = comparator.compare(refFile, newFile);
+        String refFile = args[0];
+        String newFile = args[1];
+        String outFolder = args[2];
+        String cfgFile = args[3];
+        String reportFileName = args.length == 5 ? args[4] : "Report";
 
-        ReportGenerator gen = new ReportGenerator(outDir, baseName);
+        JsonComparator comp = new JsonComparator(cfgFile);
+        List<Difference> diffs = comp.compare(refFile, newFile);
+
+        String ts = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+        ReportGenerator gen = new ReportGenerator(outFolder, ts, reportFileName);
         gen.setComparedFiles(refFile, newFile);
         gen.generateTextReport(diffs);
         gen.generateCsvReport(diffs);
         gen.generateExcelReport(diffs);
 
-        // résumé console
-        displaySummary(diffs, indexEntities(refFile), indexEntities(newFile));
-        System.out.println("All reports generated in folder: " + Paths.get(outDir).toAbsolutePath());
-    }
+        System.out.println("\n=== Ignored fields from config ===");
+        comp.getConfig().getIgnoredFields().forEach((section, fields) ->
+            System.out.println("Section: " + section + " → " + fields)
+        );
+        System.out.println("==================================");
 
-    // ===== util pour résumé =====
-    private static Map<String, JsonObject> indexEntities(String file) throws IOException {
-        try (Reader rd = Files.newBufferedReader(Paths.get(file), StandardCharsets.UTF_8)) {
-            JsonElement el = JsonParser.parseReader(rd);
-            Map<String, JsonObject> map = new LinkedHashMap<>();
-            if (el.isJsonArray()) {
-                for (JsonElement e : el.getAsJsonArray()) {
-                    if (e.isJsonObject()) {
-                        // best-effort id -> mmdCode dans commonData ou "id" direct
-                        JsonObject o = e.getAsJsonObject();
-                        String id = null;
-                        if (o.has("commonData") && o.get("commonData").isJsonObject()) {
-                            JsonObject cd = o.getAsJsonObject("commonData");
-                            if (cd.has("mmdCode") && cd.get("mmdCode").isJsonPrimitive())
-                                id = cd.get("mmdCode").getAsString();
-                        }
-                        if (id == null && o.has("id") && o.get("id").isJsonPrimitive())
-                            id = o.get("id").getAsString();
-                        if (id == null) id = o.toString(); // fallback
-                        map.put(id, o);
-                    }
-                }
-            } else if (el.isJsonObject()) {
-                map.put("ROOT", el.getAsJsonObject());
-            }
-            return map;
-        }
+        displaySummary(
+            diffs,
+            comp.indexEntities(
+                JsonParser.parseReader(new FileReader(refFile)).getAsJsonArray()
+            ),
+            comp.indexEntities(
+                JsonParser.parseReader(new FileReader(newFile)).getAsJsonArray()
+            )
+        );
     }
 
     private static void displaySummary(List<Difference> diffs,
@@ -71,29 +54,34 @@ public class CompareJsonFiles {
                                        Map<String, JsonObject> newMap) {
         int totalRef = refMap.size();
         int totalNew = newMap.size();
+        int isoCount = 0, added = 0, deleted = 0, modified = 0;
 
-        int iso = 0, added = 0, deleted = 0, modified = 0;
+        for (String id : refMap.keySet()) {
+            if (!newMap.containsKey(id)) {
+                deleted++;
+            } else {
+                boolean hasRealModif = diffs.stream()
+                    .anyMatch(d -> d.getEntityId().equals(id)
+                            && d.getType() == ChangeType.MODIFICATION);
+                boolean hasOnlyIgnored = diffs.stream()
+                    .anyMatch(d -> d.getEntityId().equals(id)
+                            && d.getType() == ChangeType.IGNORED);
 
-        Set<String> ids = new LinkedHashSet<>();
-        ids.addAll(refMap.keySet());
-        ids.addAll(newMap.keySet());
+                if (hasRealModif)
+                    modified++;
+                else if (hasOnlyIgnored || !hasRealModif)
+                    isoCount++;
+            }
+        }
 
-        for (String id : ids) {
-            boolean inRef = refMap.containsKey(id);
-            boolean inNew = newMap.containsKey(id);
-
-            if (inRef && !inNew) { deleted++; continue; }
-            if (!inRef && inNew) { added++; continue; }
-
-            boolean isMod = diffs.stream().anyMatch(d -> d.getEntityId().equals(id) &&
-                                                         d.getType() == ChangeType.MODIFICATION);
-            if (isMod) modified++; else iso++;
+        for (String id : newMap.keySet()) {
+            if (!refMap.containsKey(id)) added++;
         }
 
         System.out.println("\n=== Summary ===");
         System.out.printf("Reference file: %d objects%n", totalRef);
         System.out.printf("New file: %d objects%n", totalNew);
-        System.out.printf("Iso objects: %d%n", iso);
+        System.out.printf("Iso objects: %d%n", isoCount);
         System.out.printf("Objects modified: %d%n", modified);
         System.out.printf("Objects added: %d%n", added);
         System.out.printf("Objects deleted: %d%n", deleted);
