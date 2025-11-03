@@ -5,66 +5,75 @@ import java.io.*;
 import java.util.*;
 
 public class ConfigurationManager {
+
     private List<String> primaryKeys;
     private String fallbackKey;
-    private JsonObject subSectionKeys;
     private JsonObject ignoredFields;
-    private String separator = "|";
+    private JsonObject subSectionKeys;
     private String reportFileName;
 
     public ConfigurationManager(String configFile) throws IOException {
-        File cfgFile = new File(configFile);
-
-        if (!cfgFile.exists()) {
-            throw new FileNotFoundException("Configuration file not found: " + cfgFile.getAbsolutePath());
+        File file = new File(configFile);
+        if (!file.exists()) {
+            throw new FileNotFoundException("Configuration file not found: " + configFile);
         }
 
-        try (FileReader reader = new FileReader(cfgFile)) {
+        try (FileReader reader = new FileReader(file)) {
             JsonObject config = JsonParser.parseReader(reader).getAsJsonObject();
 
-            // Lecture des clés principales
-            JsonElement pkElem = config.get("primary_key");
+            // primary_key
             this.primaryKeys = new ArrayList<>();
-            if (pkElem != null) {
-                if (pkElem.isJsonArray()) {
-                    for (JsonElement elem : pkElem.getAsJsonArray()) {
-                        this.primaryKeys.add(elem.getAsString());
+            if (config.has("primary_key")) {
+                JsonElement pk = config.get("primary_key");
+                if (pk.isJsonArray()) {
+                    for (JsonElement el : pk.getAsJsonArray()) {
+                        primaryKeys.add(el.getAsString());
                     }
                 } else {
-                    this.primaryKeys.add(pkElem.getAsString());
+                    primaryKeys.add(pk.getAsString());
                 }
             }
 
-            // Lecture fallback
-            this.fallbackKey = config.has("fallback_key") ? config.get("fallback_key").getAsString() : null;
+            // fallback_key
+            this.fallbackKey = config.has("fallback_key")
+                    ? config.get("fallback_key").getAsString()
+                    : null;
 
-            // Lecture sous-sections
-            this.subSectionKeys = config.has("subSectionKeys")
-                    ? config.getAsJsonObject("subSectionKeys")
-                    : new JsonObject();
-
-            // Lecture des champs ignorés
+            // ignored_fields
             this.ignoredFields = config.has("ignored_fields") && config.get("ignored_fields").isJsonObject()
                     ? config.getAsJsonObject("ignored_fields")
                     : new JsonObject();
 
-            // Lecture du séparateur
-            this.separator = config.has("separator") ? config.get("separator").getAsString() : "|";
+            // subSectionKeys (optionnel)
+            this.subSectionKeys = config.has("subSectionKeys") && config.get("subSectionKeys").isJsonObject()
+                    ? config.getAsJsonObject("subSectionKeys")
+                    : new JsonObject();
 
-            // Nom du rapport
+            // nom du rapport
             this.reportFileName = config.has("reportFileName")
                     ? config.get("reportFileName").getAsString()
-                    : "JSONReport";
-
-        } catch (Exception e) {
-            throw new IOException("Error reading configuration file: " + e.getMessage(), e);
+                    : "JSON_Report";
         }
     }
 
-    public List<String> getPrimaryKeys() { return primaryKeys; }
-    public String getFallbackKey() { return fallbackKey; }
-    public JsonObject getSubSectionKeys() { return subSectionKeys; }
-    public JsonObject getIgnoredFields() { return ignoredFields; }
-    public String getSeparator() { return separator; }
-    public String getReportFileName() { return reportFileName; }
+    // === Getters ===
+    public List<String> getPrimaryKeys() {
+        return primaryKeys;
+    }
+
+    public String getFallbackKey() {
+        return fallbackKey;
+    }
+
+    public JsonObject getIgnoredFields() {
+        return ignoredFields;
+    }
+
+    public JsonObject getSubSectionKeys() {
+        return subSectionKeys;
+    }
+
+    public String getReportFileName() {
+        return reportFileName;
+    }
 }
