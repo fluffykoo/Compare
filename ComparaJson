@@ -1,0 +1,48 @@
+package com.mmd.json;
+
+import java.io.*;
+import java.util.*;
+
+public class CompareJsonFiles {
+
+    public static void main(String[] args) throws Exception {
+        if (args.length < 4) {
+            System.out.println("Usage: CompareJsonFiles <refFile> <newFile> <outputFolder> <configFile>");
+            return;
+        }
+
+        String refFile = args[0];
+        String newFile = args[1];
+        String outputFolder = args[2];
+        String configFile = args[3];
+
+        // Création du dossier de sortie si nécessaire
+        new File(outputFolder).mkdirs();
+
+        // Initialisation du comparateur avec le fichier de configuration
+        JsonComparator comparator = new JsonComparator(configFile);
+        List<Difference> diffs = comparator.compare(refFile, newFile);
+
+        // Génération des rapports dans le dossier choisi
+        ReportGenerator generator = new ReportGenerator(outputFolder, refFile, newFile, "JSON_Report");
+        generator.setComparedFiles(refFile, newFile);
+        generator.generateTextReport(diffs);
+        generator.generateCsvReport(diffs);
+        generator.generateExcelReport(diffs);
+
+        // Résumé console
+        displaySummary(diffs);
+    }
+
+    private static void displaySummary(List<Difference> diffs) {
+        System.out.println("\n=== Summary ===");
+        long added = diffs.stream().filter(d -> d.getType() == ChangeType.ADDITION).count();
+        long deleted = diffs.stream().filter(d -> d.getType() == ChangeType.DELETION).count();
+        long modified = diffs.stream().filter(d -> d.getType() == ChangeType.MODIFICATION).count();
+
+        System.out.println("Objects added: " + added);
+        System.out.println("Objects deleted: " + deleted);
+        System.out.println("Objects modified: " + modified);
+        System.out.println("Total differences: " + diffs.size());
+    }
+}
