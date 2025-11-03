@@ -1,5 +1,8 @@
 package com.mmd.json;
 
+import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
@@ -24,6 +27,7 @@ public class ReportGenerator {
         this.newFileName = newFileName;
     }
 
+    // === TXT REPORT ===
     public void generateTextReport(List<Difference> differences) throws IOException {
         String fileName = Paths.get(outputFolder, baseName + "_" + timestamp + ".txt").toString();
         Files.createDirectories(Paths.get(outputFolder));
@@ -52,6 +56,7 @@ public class ReportGenerator {
         }
     }
 
+    // === CSV REPORT ===
     public void generateCsvReport(List<Difference> differences) throws IOException {
         String fileName = Paths.get(outputFolder, baseName + "_" + timestamp + ".csv").toString();
         Files.createDirectories(Paths.get(outputFolder));
@@ -68,6 +73,47 @@ public class ReportGenerator {
         }
     }
 
+    // === EXCEL REPORT ===
+    public void generateExcelReport(List<Difference> differences) throws IOException {
+        String fileName = Paths.get(outputFolder, baseName + "_" + timestamp + ".xlsx").toString();
+        Files.createDirectories(Paths.get(outputFolder));
+
+        Workbook workbook = new XSSFWorkbook();
+        Sheet sheet = workbook.createSheet("Differences");
+        String[] headers = {"ID", "Type", "Section", "Key", "Old Value", "New Value"};
+
+        // Header
+        Row header = sheet.createRow(0);
+        for (int i = 0; i < headers.length; i++) {
+            Cell cell = header.createCell(i);
+            cell.setCellValue(headers[i]);
+            CellStyle style = workbook.createCellStyle();
+            Font font = workbook.createFont();
+            font.setBold(true);
+            style.setFont(font);
+            cell.setCellStyle(style);
+        }
+
+        // Data
+        int rowNum = 1;
+        for (Difference diff : differences) {
+            Row row = sheet.createRow(rowNum++);
+            row.createCell(0).setCellValue(nullToEmpty(diff.getEntityId()));
+            row.createCell(1).setCellValue(diff.getType().name());
+            row.createCell(2).setCellValue(nullToEmpty(diff.getSection()));
+            row.createCell(3).setCellValue(nullToEmpty(diff.getKey()));
+            row.createCell(4).setCellValue(nullToEmpty(diff.getOldValue()));
+            row.createCell(5).setCellValue(nullToEmpty(diff.getNewValue()));
+        }
+
+        for (int i = 0; i < headers.length; i++) sheet.autoSizeColumn(i);
+
+        try (FileOutputStream out = new FileOutputStream(fileName)) {
+            workbook.write(out);
+        }
+        workbook.close();
+    }
+
     private String escape(String s) {
         if (s == null) return "";
         String v = s.replace("\"", "\"\"");
@@ -75,5 +121,9 @@ public class ReportGenerator {
             return "\"" + v + "\"";
         }
         return v;
+    }
+
+    private String nullToEmpty(String s) {
+        return s == null ? "" : s;
     }
 }
