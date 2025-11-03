@@ -1,117 +1,37 @@
-package com.mmd.json;
+private String extractCompositeId(JsonObject obj, List<String> keys, String fallbackKey) {
+    StringBuilder sb = new StringBuilder();
+    boolean found = false;
 
-import com.google.gson.*;
-import java.io.*;
-import java.util.*;
+    for (String key : keys) {
+        if (!obj.has(key)) continue;
 
-public class JsonComparator {
-    private final ConfigurationManager config;
+        JsonElement element = obj.get(key);
+        String value = null;
 
-    public JsonComparator(String configFile) throws IOException {
-        this.config = new ConfigurationManager(configFile);
-    }
-
-    // Compare les fichiers
-    public List<Difference> compare(String referenceFile, String newFile) throws IOException {
-        JsonArray refArray = JsonParser.parseReader(new FileReader(referenceFile)).getAsJsonArray();
-        JsonArray newArray = JsonParser.parseReader(new FileReader(newFile)).getAsJsonArray();
-
-        Map<String, JsonObject> refMap = indexEntities(refArray);
-        Map<String, JsonObject> newMap = indexEntities(newArray);
-
-        List<Difference> differences = new ArrayList<>();
-
-        // Suppressions / modifications
-        for (String entityId : refMap.keySet()) {
-            if (!newMap.containsKey(entityId)) {
-                differences.add(new Difference(entityId, ChangeType.DELETION, "", "", null, null));
-            } else {
-                compareEntities(entityId, refMap.get(entityId), newMap.get(entityId), differences);
-            }
-        }
-
-        // Ajouts
-        for (String entityId : newMap.keySet()) {
-            if (!refMap.containsKey(entityId)) {
-                differences.add(new Difference(entityId, ChangeType.ADDITION, "", "", null, null));
-            }
-        }
-
-        return differences;
-    }
-
-    // Indexation par clé composite
-    public Map<String, JsonObject> indexEntities(JsonArray array) {
-        Map<String, JsonObject> map = new LinkedHashMap<>();
-        for (JsonElement elem : array) {
-            if (!elem.isJsonObject()) continue;
-            JsonObject obj = elem.getAsJsonObject();
-            String id = extractCompositeId(obj, config.getPrimaryKeys(), config.getFallbackKey());
-            if (id != null) map.put(id, obj);
-        }
-        return map;
-    }
-
-    // Génération d’un ID unique
-    private String extractCompositeId(JsonObject obj, List<String> keys, String fallbackKey) {
-        StringBuilder sb = new StringBuilder();
-        boolean found = false;
-        String delimiter = config.getSeparator();
-
-        for (String key : keys) {
-            if (obj.has(key)) {
-                JsonElement element = obj.get(key);
-                String value = null;
-
-                if (element.isJsonPrimitive()) {
-                    value = element.getAsString();
-                } else if (element.isJsonObject()) {
-                    JsonObject nested = element.getAsJsonObject();
-                    for (String sub : Arrays.asList("id", "code", "value", "name", "identifier")) {
-                        if (nested.has(sub) && nested.get(sub).isJsonPrimitive()) {
-                            value = nested.get(sub).getAsString();
-                            break;
-                        }
-                    }
-                    if (value == null) value = nested.toString();
-                }
-
-                if (value != null) {
-                    if (found) sb.append(delimiter);
-                    sb.append(value);
-                    found = true;
+        if (element.isJsonPrimitive()) {
+            value = element.getAsString();
+        } else if (element.isJsonObject()) {
+            JsonObject nested = element.getAsJsonObject();
+            for (String sub : Arrays.asList("id", "code", "value", "name", "identifier")) {
+                if (nested.has(sub) && nested.get(sub).isJsonPrimitive()) {
+                    value = nested.get(sub).getAsString();
+                    break;
                 }
             }
         }
 
-        if (found) return sb.toString();
-
-        // Fallback
-        if (fallbackKey != null && obj.has(fallbackKey)) {
-            JsonElement fb = obj.get(fallbackKey);
-            if (fb.isJsonPrimitive()) return fb.getAsString();
-            if (fb.isJsonObject()) {
-                JsonObject nested = fb.getAsJsonObject();
-                for (String sub : Arrays.asList("id", "code", "value", "name")) {
-                    if (nested.has(sub) && nested.get(sub).isJsonPrimitive()) {
-                        return nested.get(sub).getAsString();
-                    }
-                }
-            }
-        }
-
-        return null;
-    }
-
-    // Comparaison standard
-    private void compareEntities(String id, JsonObject refObj, JsonObject newObj, List<Difference> differences) {
-        for (String key : refObj.keySet()) {
-            String oldVal = refObj.get(key).isJsonNull() ? null : refObj.get(key).toString();
-            String newVal = newObj.has(key) ? newObj.get(key).toString() : null;
-
-            if (!Objects.equals(oldVal, newVal)) {
-                differences.add(new Difference(id, ChangeType.MODIFICATION, "", key, oldVal, newVal));
-            }
+        if (value != null) {
+            if (found) sb.append("|");
+            sb.append(value);
+            found = true;
         }
     }
+
+    // clé de secours (fallback)
+    if (!found && fallbackKey != null && obj.has(fallbackKey)) {
+        JsonElement fb = obj.get(fallbackKey);
+        if (fb.isJsonPrimitive()) return fb.getAsString();
+    }
+
+    return found ? sb.toString() : null;
 }
