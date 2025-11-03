@@ -1,0 +1,49 @@
+package com.mmd.json;
+
+import java.io.*;
+import java.time.*;
+import java.time.format.*;
+import java.util.*;
+import com.google.gson.*;
+
+public class CompareJsonFiles {
+
+    public static void main(String[] args) throws Exception {
+        if (args.length < 4 || args.length > 5) {
+            System.out.println("Usage: java CompareJsonFiles <refFile> <newFile> <outputFolder> <configFile> <reportName>");
+            return;
+        }
+
+        String refFile = args[0];
+        String newFile = args[1];
+        String outputFolder = args[2];
+        String configFile = args[3];
+        String reportName = args.length == 5 ? args[4] : "JSON_Report";
+
+        // Création du comparateur avec le fichier de config
+        JsonComparator comp = new JsonComparator(configFile);
+        List<Difference> diffs = comp.compare(refFile, newFile);
+
+        // Génération du rapport
+        String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+        ReportGenerator gen = new ReportGenerator(outputFolder, timestamp, reportName);
+        gen.setComparedFiles(refFile, newFile);
+        gen.generateTextReport(diffs);
+        gen.generateExcelReport(diffs);
+
+        // Résumé
+        displaySummary(diffs);
+    }
+
+    private static void displaySummary(List<Difference> diffs) {
+        long added = diffs.stream().filter(d -> d.getType() == ChangeType.ADDITION).count();
+        long deleted = diffs.stream().filter(d -> d.getType() == ChangeType.DELETION).count();
+        long modified = diffs.stream().filter(d -> d.getType() == ChangeType.MODIFICATION).count();
+
+        System.out.println("\n=== Summary ===");
+        System.out.println("Objects added: " + added);
+        System.out.println("Objects deleted: " + deleted);
+        System.out.println("Objects modified: " + modified);
+        System.out.println("Total differences: " + diffs.size());
+    }
+}
