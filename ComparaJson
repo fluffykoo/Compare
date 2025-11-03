@@ -4,11 +4,16 @@ import java.io.*;
 import java.time.*;
 import java.time.format.*;
 import java.util.*;
-import com.google.gson.*;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonParser;
 
 public class CompareJsonFiles {
 
     public static void main(String[] args) throws Exception {
+
+        // Vérification du nombre d'arguments
         if (args.length < 4 || args.length > 5) {
             System.out.println("Usage: java CompareJsonFiles <refFile> <newFile> <outputFolder> <configFile> [reportFileNameJSON]");
             return;
@@ -18,45 +23,49 @@ public class CompareJsonFiles {
         String newFile = args[1];
         String outFolder = args[2];
         String cfgFile = args[3];
-        String reportFileNameJSON = (args.length == 5) ? args[4] : null;
+        String reportFileNameJSON = (args.length == 5) ? args[4] : "JSON_Report";
 
-        // Crée le dossier de sortie s’il n’existe pas
+        // Création du dossier de sortie si nécessaire
         new File(outFolder).mkdirs();
 
-        // Initialisation du comparateur et de sa configuration
+        // Initialisation du comparateur avec le fichier de configuration
         JsonComparator comp = new JsonComparator(cfgFile);
-        ConfigurationManager configManager = comp.getConfigurationManager();
-
-        // Exécution de la comparaison
         List<Difference> diffs = comp.compare(refFile, newFile);
 
-        // Génération du timestamp et du nom de base
+        // Génération du timestamp
         String ts = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
-        String baseName = (reportFileNameJSON != null) ? reportFileNameJSON : "DiffMate_Report_" + ts;
 
-        // Génération des rapports dans le dossier choisi
-        ReportGenerator gen = new ReportGenerator(outFolder, ts, baseName);
+        // Création du générateur de rapport
+        ReportGenerator gen = new ReportGenerator(outFolder, ts, reportFileNameJSON);
         gen.setComparedFiles(refFile, newFile);
         gen.generateTextReport(diffs);
         gen.generateExcelReport(diffs);
         gen.generateCsvReport(diffs);
 
-        // Affichage des champs ignorés
+        // Champs ignorés
         System.out.println("\nIgnored fields:");
-        Map<String, List<String>> ignored = configManager.getIgnoredFields();
+        Map<String, List<String>> ignored = comp.getConfig().getIgnoredFields();
         for (Map.Entry<String, List<String>> entry : ignored.entrySet()) {
-            System.out.print(" - " + entry.getKey() + " : ");
+            System.out.print(" " + entry.getKey() + " : ");
             for (String field : entry.getValue()) {
                 System.out.print(field + " ");
             }
             System.out.println();
         }
 
-        // Résumé des différences
+        // Résumé final
         displaySummary(
             diffs,
-            comp.indexEntities(JsonParser.parseReader(new InputStreamReader(new FileInputStream(refFile), java.nio.charset.StandardCharsets.UTF_8)).getAsJsonArray()),
-            comp.indexEntities(JsonParser.parseReader(new InputStreamReader(new FileInputStream(newFile), java.nio.charset.StandardCharsets.UTF_8)).getAsJsonArray())
+            comp.indexEntities(
+                JsonParser.parseReader(
+                    new InputStreamReader(new FileInputStream(refFile), java.nio.charset.StandardCharsets.UTF_8)
+                ).getAsJsonArray()
+            ),
+            comp.indexEntities(
+                JsonParser.parseReader(
+                    new InputStreamReader(new FileInputStream(newFile), java.nio.charset.StandardCharsets.UTF_8)
+                ).getAsJsonArray()
+            )
         );
     }
 
