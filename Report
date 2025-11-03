@@ -1,0 +1,18 @@
+public void generateTextReport(List<Difference> differences) throws IOException {
+    String fileName = String.format("%s/%s_%s.txt", outputFolder, baseName, timestamp);
+    try (BufferedWriter writer = new BufferedWriter(new FileWriter(fileName))) {
+        writer.write("=== JSON Differences Report ===\n\n");
+
+        if (refFileName != null && newFileName != null) {
+            writer.write("Reference file: " + refFileName + "\n");
+            writer.write("New file: " + newFileName + "\n\n");
+        }
+
+        for (Difference diff : differences) {
+            writer.write(diff.toString() + "\n");
+        }
+
+        writer.flush();
+    }
+    System.out.println("Text (.txt) report generated : " + fileName);
+}
