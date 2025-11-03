@@ -1,0 +1,111 @@
+// === Comparaison détaillée d’une entité ===
+private void compareEntities(String entityId, String section,
+                             JsonObject refObj, JsonObject newObj, List<Difference> diffs) {
+
+    Set<String> allKeys = new TreeSet<>();
+    allKeys.addAll(refObj.keySet());
+    allKeys.addAll(newObj.keySet());
+
+    Map<String, List<String>> ignored = config.getIgnoredFields();
+    List<String> ignoredInSection = ignored.getOrDefault(section, Collections.emptyList());
+
+    for (String key : allKeys) {
+        boolean skip = false;
+
+        // 1. Clés ignorées dans la section courante
+        if (ignoredInSection.contains(key)) {
+            skip = true;
+        } else {
+            // 2. Clés qualifiées ou simples dans d'autres sections
+            String qualifiedKey = section.isEmpty() ? key : section + "." + key;
+            for (Map.Entry<String, List<String>> entry : ignored.entrySet()) {
+                if (entry.getValue().contains(qualifiedKey) || entry.getValue().contains(key)) {
+                    skip = true;
+                    break;
+                }
+            }
+        }
+        if (skip) continue;
+
+        JsonElement v1 = refObj.has(key) ? refObj.get(key) : null;
+        JsonElement v2 = newObj.has(key) ? newObj.get(key) : null;
+
+        if (v1 == null && v2 != null) {
+            handleAddition(entityId, section, key, v2, diffs);
+            continue;
+        }
+        if (v1 != null && v2 == null) {
+            diffs.add(new Difference(entityId, ChangeType.DELETION, section, key, stringify(v1), null));
+            continue;
+        }
+        if (v1 == null) continue;
+
+        if (v1.isJsonObject() && v2.isJsonObject()) {
+            String nextSection = section.isEmpty() ? key : section + "." + key;
+            compareEntities(entityId, nextSection, v1.getAsJsonObject(), v2.getAsJsonObject(), diffs);
+        } else if (v1.isJsonArray() && v2.isJsonArray()) {
+            String nextSection = section.isEmpty() ? key : section + "." + key;
+            compareJsonArraysByKey(entityId, nextSection, v1.getAsJsonArray(), v2.getAsJsonArray(), diffs);
+        } else {
+            String s1 = stringify(v1);
+            String s2 = stringify(v2);
+            if (!Objects.equals(s1, s2)) {
+                diffs.add(new Difference(entityId, ChangeType.MODIFICATION, section, key, s1, s2));
+            }
+        }
+    }
+}
+
+
+private void compareNestedObjects(String entityId, String section,
+                                  JsonObject refObj, JsonObject newObj, List<Difference> diffs) {
+
+    Set<String> allKeys = new TreeSet<>();
+    allKeys.addAll(refObj.keySet());
+    allKeys.addAll(newObj.keySet());
+
+    Map<String, List<String>> ignored = config.getIgnoredFields();
+    List<String> ignoredInSection = ignored.getOrDefault(section, Collections.emptyList());
+
+    for (String key : allKeys) {
+        boolean skip = false;
+
+        // 1. Clés ignorées dans la section courante
+        if (ignoredInSection.contains(key)) {
+            skip = true;
+        } else {
+            // 2. Clés qualifiées ou simples dans d'autres sections
+            String qualifiedKey = section.isEmpty() ? key : section + "." + key;
+            for (Map.Entry<String, List<String>> entry : ignored.entrySet()) {
+                if (entry.getValue().contains(qualifiedKey) || entry.getValue().contains(key)) {
+                    skip = true;
+                    break;
+                }
+            }
+        }
+        if (skip) continue;
+
+        JsonElement v1 = refObj.has(key) ? refObj.get(key) : null;
+        JsonElement v2 = newObj.has(key) ? newObj.get(key) : null;
+
+        if (v1 == null && v2 != null) {
+            handleAddition(entityId, section, key, v2, diffs);
+        } else if (v1 != null && v2 == null) {
+            diffs.add(new Difference(entityId, ChangeType.DELETION, section, key, stringify(v1), null));
+        } else if (v1 != null) {
+            if (v1.isJsonObject() && v2.isJsonObject()) {
+                compareNestedObjects(entityId, section.isEmpty() ? key : section + "." + key,
+                        v1.getAsJsonObject(), v2.getAsJsonObject(), diffs);
+            } else if (v1.isJsonArray() && v2.isJsonArray()) {
+                compareJsonArraysByKey(entityId, section.isEmpty() ? key : section + "." + key,
+                        v1.getAsJsonArray(), v2.getAsJsonArray(), diffs);
+            } else {
+                String s1 = stringify(v1);
+                String s2 = stringify(v2);
+                if (!Objects.equals(s1, s2)) {
+                    diffs.add(new Difference(entityId, ChangeType.MODIFICATION, section, key, s1, s2));
+                }
+            }
+        }
+    }
+}
